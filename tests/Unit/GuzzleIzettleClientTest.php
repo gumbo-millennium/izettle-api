@@ -11,6 +11,7 @@ use GuzzleHttp\ClientInterface as GuzzleClientInterface;
 use LauLamanApps\IzettleApi\API\Universal\IzettlePostable;
 use LauLamanApps\IzettleApi\Client\AccessToken;
 use LauLamanApps\IzettleApi\Client\ApiScope;
+use LauLamanApps\IzettleApi\Client\Exception\AccessTokenNotRefreshableException;
 use LauLamanApps\IzettleApi\GuzzleIzettleClient;
 use Mockery;
 use PHPUnit\Framework\TestCase;
@@ -94,6 +95,45 @@ final class GuzzleIzettleClientTest extends TestCase
     /**
      * @test
      */
+    public function getAccessTokenFromApiTokenAssertion(): void
+    {
+        $accessToken = 'accessToken';
+        $expiresIn = 7200;
+        $assertion = str_repeat('3a8ba448-69c2-4b9d-b8f3-5f8c2c04a2df', 32);
+        $options = [
+            'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
+            'form_params' => [
+                'grant_type' => GuzzleIzettleClient::API_ACCESS_ASSERTION_GRANT,
+                'client_id' => self::CLIENT_ID,
+                'assertion' => $assertion,
+            ],
+        ];
+
+        $guzzleClientMock = Mockery::mock(GuzzleClient::class);
+        $guzzleClientMock->shouldReceive('post')->withArgs([GuzzleIzettleClient::API_ACCESS_TOKEN_REQUEST_URL, $options])->once()->andReturnSelf();
+        $guzzleClientMock->shouldReceive('getBody')->once()->andReturnSelf();
+        $guzzleClientMock->shouldReceive('getContents')->once()->andReturn(json_encode(
+            [
+                'access_token' => $accessToken,
+                'expires_in' => $expiresIn
+            ]
+        ));
+
+
+        $accessTokenFactory = new GuzzleIzettleClient($guzzleClientMock, self::CLIENT_ID, self::CLIENT_SECRET);
+        $accessTokenObject =  $accessTokenFactory->getAccessTokenFromApiTokenAssertion($assertion);
+
+        self::assertSame($accessToken, $accessTokenObject->getToken());
+        self::assertNull($accessTokenObject->getRefreshToken());
+        self::assertEquals(
+            (new DateTime($expiresIn . ' second'))->format('Y-m-d H:i:s'),
+            $accessTokenObject->getExpires()->format('Y-m-d H:i:s')
+        );
+    }
+
+    /**
+     * @test
+     */
     public function refreshAccessToken(): void
     {
         $oldAccessToken = new AccessToken('accessToken', new DateTimeImmutable(), 'refreshToken');
@@ -131,6 +171,11 @@ final class GuzzleIzettleClientTest extends TestCase
             (new DateTime($newExpiresIn . ' second'))->format('Y-m-d H:i:s'),
             $accessTokenObject->getExpires()->format('Y-m-d H:i:s')
         );
+
+        $fixedToken = new AccessToken('test', new DateTimeImmutable(), null);
+
+        $this->expectException(AccessTokenNotRefreshableException::class);
+        $accessTokenFactory->refreshAccessToken($fixedToken);
     }
 
     /**

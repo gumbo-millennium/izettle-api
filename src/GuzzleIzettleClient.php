@@ -14,6 +14,7 @@ use LauLamanApps\IzettleApi\API\Universal\IzettlePostable;
 use LauLamanApps\IzettleApi\Client\AccessToken;
 use LauLamanApps\IzettleApi\Client\ApiScope;
 use LauLamanApps\IzettleApi\Client\Exception\AccessTokenExpiredException;
+use LauLamanApps\IzettleApi\Client\Exception\AccessTokenNotRefreshableException;
 use LauLamanApps\IzettleApi\Client\Exception\GuzzleClientExceptionHandler;
 use LauLamanApps\IzettleApi\Exception\UnprocessableEntityException;
 use Psr\Http\Message\ResponseInterface;
@@ -108,15 +109,40 @@ class GuzzleIzettleClient implements IzettleClientInterface
         return $this->accessToken;
     }
 
+    public function getAccessTokenFromApiTokenAssertion(string $assertion): AccessToken
+    {
+        $options = [
+            'form_params' => [
+                'grant_type' => self::API_ACCESS_ASSERTION_GRANT,
+                'client_id' => $this->clientId,
+                'assertion' => $assertion
+            ],
+        ];
+
+        try {
+            $this->setAccessToken($this->requestAccessToken(self::API_ACCESS_TOKEN_REQUEST_URL, $options));
+        } catch (ClientException $exception) {
+            GuzzleClientExceptionHandler::handleClientException($exception);
+        }
+
+        return $this->accessToken;
+    }
+
     public function refreshAccessToken(?AccessToken $accessToken =  null): AccessToken
     {
         $accessToken = $accessToken ?? $this->accessToken;
+
+        $refreshToken = $accessToken->getRefreshToken();
+        if ($refreshToken === null) {
+            throw new AccessTokenNotRefreshableException('This access token cannot be renewed.');
+        }
+
         $options = [
             'form_params' => [
                 'grant_type' => self::API_ACCESS_TOKEN_REFRESH_TOKEN_GRANT,
                 'client_id' => $this->clientId,
                 'client_secret' => $this->clientSecret,
-                'refresh_token' => $accessToken->getRefreshToken()
+                'refresh_token' => $refreshToken
             ],
         ];
 
@@ -229,7 +255,7 @@ class GuzzleIzettleClient implements IzettleClientInterface
         return new AccessToken(
             $data['access_token'],
             new DateTimeImmutable(sprintf('+%d second', $data['expires_in'])),
-            $data['refresh_token']
+            $data['refresh_token'] ?? null
         );
     }
 }
